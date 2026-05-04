@@ -1,41 +1,71 @@
 pipeline {
     agent any
 
+    environment {
+        NAMESPACE = "chat-app"
+    }
+
     stages {
+
         stage('Checkout') {
             steps {
-                git branch: 'master',
-                    url: 'https://github.com/iemafzalhassan/full-stack_chatApp.git'
+                git branch: 'main',
+                    url: 'https://github.com/MOUNTHOG/FullStack-Chat-App.git'
             }
         }
 
-        stage('Test') {
+        stage('Build Docker Images') {
             steps {
-                script {
-                    sh '''
-                        sleep 15
-                        curl -f http://localhost:5001/health
-                        curl -f http://localhost/ || exit 1
-                    '''
-                }
+                sh '''
+                    docker build -t chat-backend ./backend
+                    docker build -t chat-frontend ./frontend
+                '''
             }
         }
 
-        stage('Deploy') {
+        stage('Load Images into Kind') {
             steps {
-                script {
-                    sh 'docker-compose up -d --build'
-                }
+                sh '''
+                    kind load docker-image chat-backend
+                    kind load docker-image chat-frontend
+                '''
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh '''
+                    kubectl apply -f k8s/
+                '''
+            }
+        }
+
+        stage('Wait for Pods') {
+            steps {
+                sh '''
+                    kubectl wait --for=condition=ready pod -l app=backend -n $NAMESPACE --timeout=120s
+                    kubectl wait --for=condition=ready pod -l app=frontend -n $NAMESPACE --timeout=120s
+                '''
+            }
+        }
+
+        stage('Test Application') {
+            steps {
+                sh '''
+                    kubectl port-forward svc/frontend-svc 3000:80 -n $NAMESPACE &
+                    sleep 10
+                    curl -f http://localhost:3000 || exit 1
+                '''
             }
         }
     }
 
     post {
         success {
-            echo 'Deployment and tests completed successfully!'
+            echo '✅ Pipeline executed successfully!'
         }
         failure {
-            echo 'Deployment or tests failed.'
+            echo '❌ Pipeline failed!'
         }
     }
 }
